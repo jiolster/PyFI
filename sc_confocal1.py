@@ -21,6 +21,8 @@ from skimage.filters import laplace
 from skimage.measure import label, regionprops #For counting
 import csv #Export the results as .csv
 import errno # for checking whether the montage direcotry already exists
+from cellpose import models, io #Cellpose ML model for single cell segmentation
+import math #For single cell image processing
 
 ###Functions
 
@@ -232,7 +234,7 @@ def make_sure_path_exists(path):
             
 #Function 13
 # Makes a montage of the analysed images in each fov
-def montage(Nuc, Measure, Tub, cpMask, NucMask, back, field):
+def montage(Nuc, Measure, Tub, cpMask, NucMask, back, field, masks):
     
     image_names = field.split("-")
     
@@ -272,35 +274,30 @@ def montage(Nuc, Measure, Tub, cpMask, NucMask, back, field):
     
     ###Cellpose
     
-    #Tub and DAPI merge
-    dim = np.shape(Tub)
-    zero = np.zeros(dim) #Empty channel (imshow needs all three channels for RGB)
-    merge = np.dstack((Tub*0.01, zero, DAPI*0.005))
-    ax[2][0].plt.imshow(merge) 
-    ax[2][2].set_title('Fondo')
+    #Tub and DAPI merge (Cellpose input)
+    
+    ax[2][0].imshow(DAPI, cmap = "gray")
+    ax[2][0].imshow(Tub, alpha = 0.6, cmap = 'gray')
+    ax[2][0].axis('off')
+    ax[2][0].set_title('Cellpose Input')
+    
+    #Masks
+
+    ax[2][1].imshow(masks[0])
+    ax[2][1].axis('off')
+    ax[2][1].set_title('Generated masks')
+    
+    #Masks over merge
+    
+    ax[2][2].imshow(DAPI, cmap = "gray")
+    ax[2][2].imshow(Tub, alpha = 0.6, cmap = 'gray')
+    ax[2][2].imshow(masks[0], alpha = 0.4)
     ax[2][2].axis('off')
-    
+    ax[2][2].set_title('Merge')
+
     return fig
-    
-    nimg = len(imgs)
-    for idx in range(nimg):
-        maski = masks[idx]
-        flowi = flows[idx][0]
 
-        fig = plt.figure(figsize=(12,5))
-        plot.show_segmentation(fig, imgs[idx], maski, flowi, channels=channels[idx])
-        plt.tight_layout()
-        plt.show()
 
-merge = plt.imshow(np.dstack((Tub*0.001, zero, DAPI)))
-mergearray = merge.get_array()
-
-plt.imshow(mergearray)
-
-gray = rgb2gray(mergearray)
-
-plt.imshow(DAPI, cmap='gray')
-plt.imshow(gray, cmap="gray")
 ################
 
 # Wroking direcotry (where program is saved)
@@ -320,13 +317,23 @@ main_folder = '/home/joaquin/Desktop/2024 - BeWo y Vero Confocal/20241023 - BeWo
 fields = [f for f in os.listdir(main_folder) if isdir(join(main_folder, f))]
     
 
-#Columns for the output table
-head = ["Tratamiento", "Celula", "Tiempo", "Muestra", "Campo", "Tincion", "Total", "Nuclear", "Citoplasmatico", "Rel","Max", "Nucleos"]
-
+#Columns for the output table of Average FOV measurments
 #List of lists, each row corresponds to the measurments for a field of view
+head = ["Tratamiento", "Celula", "Tiempo", "Muestra", "Campo", "Tincion", "Total", "Nuclear", "Citoplasmatico", "Rel","Max", "Nucleos"]
 
 # First row is the name of the columns
 results = [head] 
+
+#Columns for the output table of individual cell measurments
+#List of lists, each row corresponds to the measurments for a single cell
+sc_head = ["Tratamiento", "Linea", "Tiempo", "Muestra", "Campo", "Tincion", "Celula", "Total", "Nuclear", "Citoplasmatico", "Rel", "Max"]
+#Column names for output dataframe (First row)
+sc_results = [sc_head] 
+
+## Cellpose setup
+io.logger_setup()
+#Pretrained model selection: model_type='cyto' or 'nuclei' or 'cyto2' or 'cyto3'
+model = models.Cellpose(model_type='cyto3')
 
 # Loop over the direcotries for each field of view 
 for i in range(len(fields)):
@@ -359,12 +366,11 @@ for i in range(len(fields)):
     # Set background to NaN
     MeasureNaN = background2nan(Measure, cp)
     
+    ## Whole image Average
+    
     #Separate different parts of the image
     nuclear, cytoplasmatic = segment_cell(MeasureNaN, nuc)
-    
-    #Count nuclei in image
-    countNuc = countCells(nuc)
-    
+
     #Measure mean fluorescence intensity
     totalMean = np.nanmean(MeasureNaN)
     nucMean = np.nanmean(nuclear)
@@ -376,10 +382,56 @@ for i in range(len(fields)):
     # Save the field's name
     conditions = fields[i].split("-")
     
-    #Append measurments to output table.
-    row = [conditions[0], conditions[1], conditions[2], conditions[3], conditions[4], conditions[5], totalMean, nucMean, cpMean, rel, norm, countNuc]
-    results.append(row)
+    ## Single cell measurement
+    merge = np.stack((Tub, DAPI), axis = 0) #Nuclear and cytoplasmatic merge for cellpose input
     
+    
+    # Merge configuration
+    # define CHANNELS to run segementation on
+    # grayscale=0, R=1, G=2, B=3
+    # channels = [cytoplasm, nucleus]
+    # if NUCLEUS channel does not exist, set the second channel to 0
+    channels = [[0,1]]
+    
+    
+    # Configure Segmentation 
+    # if diameter is set to None, the size of the cells is estimated on a per image basis
+    # you can set the average cell `diameter` in pixels yourself (recommended)
+    # diameter can be a list or a single number for all images
+    masks, flows, styles, diams = model.eval(imgs, diameter=175, channels=channels, flow_threshold=0.8, cellprob_threshold=-3)
+    
+    #Loop over each generated mask and measure the corresponding signal
+    cellNum = int(np.max(masks[0])) #Number of cells detected
+    cells = masks[0].copy() #Image with the masks for all cells
+    dim = np.shape(cells) #Dimensions of the image
+    for x in range(1, cellNum + 1):
+        cell1 = cells == x #Choose one of the segmented cells ()
+        nuc1 = nuc.copy() #Makes a copy of nuclear mask
+        measure1 = MeasureNaN.copy() #Copy of the channel to be measured (already processed)
+        for i in range(dim[0]): #Removes the nuclei from the rest of the cells (leaves only 1)
+            for j in range(dim[1]):
+                if cell1[i,j] == False:
+                    nuc1[i,j] = False
+        
+        for i in range(dim[0]): #Isolates the fluorescence of interest from the chosen cell (the rest is set to nan)
+            for j in range(dim[1]):
+                if cell1[i,j] == False:
+                    measure1[i,j] = np.nan
+        
+        nuclear1, citoplasmatico1 = segment_cell(measure1, nuc1) #Separates the chosen cell's nuclear signal from its cytoplasmatic signal
+        
+        totalMean1 = np.nanmean(measure1) #Measure average fluorescence for the whole cell
+        nucMean1 = np.nanmean(nuclear1) #Measures nucelar fluorescence for the single cell
+        cpMean1 = np.nanmean(citoplasmatico1) #Meansures cytoplasmatic signal
+        rel1 = nucMean1 / cpMean1 #Relatice nuclear fluorescence
+        if not math.isnan(rel1): #Saves results if the mask contained a nucleus (it was actually a cell)
+            sc_row = [conditions[0], conditions[1], conditions[2], conditions[3], conditions[4], conditions[5], x, totalMean1, nucMean1, cpMean1, rel1, norm]
+            sc_results.append(sc_row)
+    
+ 
+    #Append measurments to the output table for the whole FOV
+    row = [conditions[0], conditions[1], conditions[2], conditions[3], conditions[4], conditions[5], totalMean, nucMean, cpMean, rel, norm, cellNum]
+    results.append(row)
     
     # Make montage
     montage_name = "%s.png" % (fields[i]) 
@@ -397,83 +449,3 @@ with open('sc_results.csv', 'w', newline='') as f: #Individual measurements for 
     writer = csv.writer(f)
     writer.writerows(sc_results)
 
-
-merge = np.stack((Tub, DAPI), axis = 0)
-plt.imshow(merge, cmap="gray")    
-
-from cellpose import models, io
-from cellpose import plot
-import math
-
-io.logger_setup()
-
-# model_type='cyto' or 'nuclei' or 'cyto2' or 'cyto3'
-model = models.Cellpose(model_type='cyto3')
-
-# list of files
-# PUT PATH TO YOUR FILES HERE!
-files = ['/home/joaquin/Desktop/Composite1.tif']
-
-imgs = [merge]
-
-# define CHANNELS to run segementation on
-# grayscale=0, R=1, G=2, B=3
-# channels = [cytoplasm, nucleus]
-# if NUCLEUS channel does not exist, set the second channel to 0
-channels = [[0,1]]
-# IF ALL YOUR IMAGES ARE THE SAME TYPE, you can give a list with 2 elements
-# channels = [0,0] # IF YOU HAVE GRAYSCALE
-# channels = [2,3] # IF YOU HAVE G=cytoplasm and B=nucleus
-# channels = [2,1] # IF YOU HAVE G=cytoplasm and R=nucleus
-
-# if diameter is set to None, the size of the cells is estimated on a per image basis
-# you can set the average cell `diameter` in pixels yourself (recommended)
-# diameter can be a list or a single number for all images
-
-masks, flows, styles, diams = model.eval(imgs, diameter=175, channels=channels, flow_threshold=0.8, cellprob_threshold=-3)
-
-
-nimg = len(imgs)
-for idx in range(nimg):
-    maski = masks[idx]
-    flowi = flows[idx][0]
-
-    fig = plt.figure(figsize=(12,5))
-    plot.show_segmentation(fig, imgs[idx], maski, flowi, channels=channels[idx])
-    plt.tight_layout()
-    plt.show()
-
-
-#Columns for the output table
-sc_head = ["Tratamiento", "Linea", "Tiempo", "Muestra", "Campo", "Tincion", "Celula", "Total", "Nuclear", "Citoplasmatico", "Rel", "Max"]
-
-#List of lists, each row corresponds to the measurments for a field of view
-
-sc_results = [sc_head] #Column names for output dataframe (First row)
-cellNum = int(np.max(masks[0])) #Number of cells detected
-cells = masks[0].copy() #Image with the masks for all cells
-dim = np.shape(cells) #Dimensions of the image
-for x in range(1, cellNum + 1):
-    cell1 = cells == x #Choose one of the segmented cells
-    nuc1 = nuc.copy() #Makes a copy of nuclear mask
-    measure1 = MeasureNaN.copy() #Copy of the channel to be measured (already processed)
-    for i in range(dim[0]): #Removes the nuclei from the rest of the cells
-        for j in range(dim[1]):
-            if cell1[i,j] == False:
-                nuc1[i,j] = False
-    for i in range(dim[0]): #Isolates the fluorescence of interest from the chosen cell (the rest is set to nan)
-        for j in range(dim[1]):
-            if cell1[i,j] == False:
-                measure1[i,j] = np.nan
-    
-    nuclear1, citoplasmatico1 = segment_cell(measure1, nuc1) #Separates the chosen cell's nuclear signal from its cytoplasmatic signal
-    
-    totalMean1 = np.nanmean(measure1) #Measure average fluorescence for the whole cell
-    nucMean1 = np.nanmean(nuclear1) #Measures nucelar fluorescence for the single cell
-    cpMean1 = np.nanmean(citoplasmatico1) #Meansures cytoplasmatic signal
-    rel1 = nucMean1 / cpMean1 #Relatice nuclear fluorescence
-    if not math.isnan(rel1): #Saves results if the mask contained a nucleus (it was actually a cell)
-        row = [conditions[0], conditions[1], conditions[2], conditions[3], conditions[4], conditions[5], x, totalMean1, nucMean1, cpMean1, rel1, norm]
-        sc_results.append(row)
-    
-    
