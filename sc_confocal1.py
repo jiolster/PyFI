@@ -242,7 +242,7 @@ def montage(Nuc, Measure, Tub, cpMask, NucMask, back, field, masks):
     
     #DAPI
     ax[0][0].imshow(Nuc, cmap='cmr.jungle')
-    ax[0][0].set_title('DAPI, %s' %(countNuc)) #fontsize = 36
+    ax[0][0].set_title('DAPI, %s' %(cellNum)) #fontsize = 36
     ax[0][0].axis('off')
      
     #PAR o NFkB
@@ -301,7 +301,7 @@ def montage(Nuc, Measure, Tub, cpMask, NucMask, back, field, masks):
 ################
 
 # Wroking direcotry (where program is saved)
-wd = "/home/joaquin/Desktop/2024 - BeWo y Vero Confocal/20241023 - BeWo Tul PAR/Medicion"
+wd = "C://Users//Usuario//Desktop/20241023 - BeWo Tul PAR//Medicion"
 os.chdir(wd)
 
 # Montage direcotry
@@ -311,7 +311,7 @@ make_sure_path_exists(montagedir)
 
 
 # Folder where all the images are stored, each within a direcotry for all the images in a field
-main_folder = '/home/joaquin/Desktop/2024 - BeWo y Vero Confocal/20241023 - BeWo Tul PAR/Fotos'
+main_folder = 'C://Users//Usuario//Desktop/20241023 - BeWo Tul PAR//Fotos'
 
 # List of each folder containing the images for the fields of view
 fields = [f for f in os.listdir(main_folder) if isdir(join(main_folder, f))]
@@ -352,7 +352,7 @@ for i in range(len(fields)):
     Tub = mpimg.imread(focus[2]) #Cytoplasmatic stain
     
     #Masks 
-    nuc = otsu_mask(DAPI, blur=True, erode=3, fill=7, remove_small = 250) #Nuclei
+    nuc = triangle_mask(DAPI, blur=True, erode = 5, fill = 7, remove_small = 250) #Nuclei
     cp = triangle_mask(Tub, blur=True, erode=2, fill=4, remove_small=300) #Cytoplasm
     
     #Measure average background signal
@@ -383,7 +383,7 @@ for i in range(len(fields)):
     conditions = fields[i].split("-")
     
     ## Single cell measurement
-    merge = np.stack((Tub, DAPI), axis = 0) #Nuclear and cytoplasmatic merge for cellpose input
+    imgs = [np.stack((Tub, DAPI), axis = 0)] #Nuclear and cytoplasmatic merge for cellpose input (inside list)
     
     
     # Merge configuration
@@ -404,19 +404,19 @@ for i in range(len(fields)):
     cellNum = int(np.max(masks[0])) #Number of cells detected
     cells = masks[0].copy() #Image with the masks for all cells
     dim = np.shape(cells) #Dimensions of the image
-    for x in range(1, cellNum + 1):
-        cell1 = cells == x #Choose one of the segmented cells ()
+    for c in range(1, cellNum + 1):
+        cell1 = cells == c #Choose one of the segmented cells ()
         nuc1 = nuc.copy() #Makes a copy of nuclear mask
         measure1 = MeasureNaN.copy() #Copy of the channel to be measured (already processed)
-        for i in range(dim[0]): #Removes the nuclei from the rest of the cells (leaves only 1)
-            for j in range(dim[1]):
-                if cell1[i,j] == False:
-                    nuc1[i,j] = False
+        for x in range(dim[0]): #Removes the nuclei from the rest of the cells (leaves only 1)
+            for y in range(dim[1]):
+                if cell1[x,y] == False:
+                    nuc1[x,y] = False
         
-        for i in range(dim[0]): #Isolates the fluorescence of interest from the chosen cell (the rest is set to nan)
-            for j in range(dim[1]):
-                if cell1[i,j] == False:
-                    measure1[i,j] = np.nan
+        for x in range(dim[0]): #Isolates the fluorescence of interest from the chosen cell (the rest is set to nan)
+            for y in range(dim[1]):
+                if cell1[x,y] == False:
+                    measure1[x,y] = np.nan
         
         nuclear1, citoplasmatico1 = segment_cell(measure1, nuc1) #Separates the chosen cell's nuclear signal from its cytoplasmatic signal
         
@@ -425,7 +425,7 @@ for i in range(len(fields)):
         cpMean1 = np.nanmean(citoplasmatico1) #Meansures cytoplasmatic signal
         rel1 = nucMean1 / cpMean1 #Relatice nuclear fluorescence
         if not math.isnan(rel1): #Saves results if the mask contained a nucleus (it was actually a cell)
-            sc_row = [conditions[0], conditions[1], conditions[2], conditions[3], conditions[4], conditions[5], x, totalMean1, nucMean1, cpMean1, rel1, norm]
+            sc_row = [conditions[0], conditions[1], conditions[2], conditions[3], conditions[4], conditions[5], c, totalMean1, nucMean1, cpMean1, rel1, norm]
             sc_results.append(sc_row)
     
  
@@ -435,7 +435,7 @@ for i in range(len(fields)):
     
     # Make montage
     montage_name = "%s.png" % (fields[i]) 
-    montage(DAPI, Measure, Tub, cytoplasmatic, nuclear, background, fields[i]) #Opens a plot with the three images  
+    montage(DAPI, Measure, Tub, cytoplasmatic, nuclear, background, fields[i], masks) #Opens a plot with the three images  
     plt.savefig(join(montagedir, montage_name), bbox_inches='tight', dpi = 300) #Saves the plot
     plt.close() #Closes the plot
 
