@@ -294,6 +294,8 @@ def montage(Nuc, Measure, Tub, cpMask, NucMask, back, field, masks):
     ax[2][2].imshow(masks[0], alpha = 0.4)
     ax[2][2].axis('off')
     ax[2][2].set_title('Merge')
+    
+    
 
     return fig
 
