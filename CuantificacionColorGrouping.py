@@ -85,35 +85,21 @@ def segment_cell(cells, nuclei):
 from os.path import isfile, join 
 
 files =  [f for f in os.listdir(folder) if isfile(join(folder, f))] # Makes a list of the names of all the images in the folder
-'''
-#Makes a list of all the conditions included in an image´s name (separated by "_")
-conditions = files[0].split('_') #Makes a list of all the conditions included in an image´s name (separated by "_")
-parasite_strain = conditions[0] # What strain was used in the experiment
-cell_line = conditions[1] # What cell line was infected during the experiment
-Treatment = conditions[2] # How long the cells were infected, or what else was done to them
-Sample = conditions[3] # The number for the physical sample that was taken with the above conditions
-Field = conditions[4] # The sample's field from which the image was obtained
-Channel = conditions[5] # The stain that was observed when aquiring the image
-'''
+
 files.sort() # Sort the image names so that images from each field are adjacent each other within the list
     
-from itertools import groupby
 
-# Makes a list of lists. Each sublist is made up of the conditions for each image.
+# Makes a list of lists. Each sublist is made up of the conditions for each image. 
+# Change the key word separator as appropriate (set to "_" as default).
 field_identifiers = sorted([file.split("_") for file in files])
 
 
 # List of lists. Each sublist of lists with the keywords for each image in a field
-grouped = [list(value) for key, value in groupby(field_identifiers, lambda x: x[:-1])] 
-
-#If the images for a condition are already grouped, use this commented code instead:
-'''
 groups = {} # Dictionary
 for l in field_identifiers:
     groups.setdefault(l[-1], []).append(l) #Change l[-x] to whatever position holds the field number
 
 grouped = list(groups.values()) # Changes dictionary to list (creates another object)
-'''
 
 # List of lists. All images for each field are grouped in a sublist. 
 # Re-Joins the keywords for each image, recomposing the original names. 
@@ -127,8 +113,10 @@ for group in grouped:
 
 export = [["Cepa", "Celula", "Tratamiento", "Muestra", "Campo", "PAR total", "PAR nuclear", "PAR citoplastamico", "Relacion"]]
 
-
+# Loop over every group of images (FOVs).
 for i in range(len(fields)):
+    
+    # Load images and convert them to floating point arrays (grayscale)
     filepathDAPI = os.path.join(folder, fields[i][1])
     DAPI = mpimg.imread(filepathDAPI)
     DAPI = rgb2gray(DAPI) 
