@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Fri Feb 14 17:00:08 2025
+Created on Tue Feb 18 14:53:55 2025
 
 @author: joaquin
 """
+
 
 import os
 import numpy as np
@@ -67,9 +68,12 @@ def montage(Nuc, Tc, Tub, segmented_amastigotes, cell_masks):
     
     return fig
 
+            
+#############
+
 
 # Wroking direcotry (where program is saved)
-wd = "/home/joaquin/Desktop/20250210 - Tul 10 vs 20/Medicion"
+wd = "/home/joaquin/Desktop/20250219 - MOI 10a1 4h/Medicion"
 os.chdir(wd)
 
 # Montage direcotry
@@ -79,15 +83,15 @@ make_sure_path_exists(montagedir)
 
 
 # Folder where all the images are stored, each within a direcotry for all the images in a field
-main_folder = '/home/joaquin/Desktop/20250210 - Tul 10 vs 20/Fotos'
+main_folder = '/home/joaquin/Desktop/20250219 - MOI 10a1 4h/Fotos'
 
 # List of each folder containing the images for the fields of view
 fields = [f for f in os.listdir(main_folder) if os.path.isdir(os.path.join(main_folder, f))]
-    
+fields.sort()
 
 #Columns for the output table of Average FOV measurments
 #List of lists, each row corresponds to the measurments for a field of view
-head = ["MOI", "Linea", "Campo", "Celula", "Amastigotes"]
+head = ["Cepa", "Linea","Replica", "Campo", "Celula", "Amastigotes"]
 
 # First row is the name of the columns
 results = [head] 
@@ -107,82 +111,93 @@ for fov in range(len(fields)):
     Tc = plt.imread(os.path.join(campo, fotos[2])) #Trypanosoma cruzi stain
     Tub = plt.imread(os.path.join(campo, fotos[3])) #Cytoplasmatic stain
     
-    
-    #smooth_DAPI = filters.gaussian(DAPI, sigma = 1.5)
-    
-    #fig, ax = try_all_threshold(smooth_DAPI, figsize=(10, 8), verbose=False)
-    #plt.show()
-    
-    DAPI_threshold = filters.threshold_li(DAPI)
+    #Mask for Nuclear channel
+   
+    DAPI_smooth = filters.gaussian(DAPI)
+   
+    if conditions[1] == "AC16":
+        DAPI_threshold = filters.threshold_otsu(DAPI)
+    else:
+        DAPI_threshold = filters.threshold_li(DAPI)
+        
     DAPI_mask = DAPI > DAPI_threshold
-    
+   
+    DAPI_mask = morphology.remove_small_objects(DAPI_mask, min_size=2000)
+   
     DAPI_mask = ndi.binary_fill_holes(DAPI_mask)
-    
+   
     DAPI_mask = morphology.erosion(DAPI_mask)
-    DAPI_mask = morphology.remove_small_objects(DAPI_mask, min_size=50)
-    
-    
-    DAPI_mask = segmentation.clear_border(DAPI_mask)
-    
+   
+   
+    #DAPI_mask = segmentation.clear_border(DAPI_mask)
+   
     #Watershed
     distance = ndi.distance_transform_edt(DAPI_mask) 
+   
+    local_max_coords = feature.peak_local_max(distance, min_distance=20, exclude_border=False)
+    local_max_mask = np.zeros(distance.shape, dtype=bool)
+    local_max_mask[tuple(local_max_coords.T)] = True
+    markers = measure.label(local_max_mask)
+   
+    Nuclei_mask = segmentation.watershed(-distance, markers, mask=DAPI_mask)
+    
+   
+    #Mask for anti-Tc channel
+    smooth_amastigotes = filters.gaussian(Tc)
+
+    amastigote_thresh = filters.threshold_otsu(smooth_amastigotes)
+    amastigote_mask = smooth_amastigotes > amastigote_thresh
+    
+    amastigote_mask = morphology.remove_small_objects(amastigote_mask, min_size=100)
+    
+    # Watershed
+    distance = ndi.distance_transform_edt(amastigote_mask) 
     
     local_max_coords = feature.peak_local_max(distance, min_distance=7, exclude_border=False)
     local_max_mask = np.zeros(distance.shape, dtype=bool)
     local_max_mask[tuple(local_max_coords.T)] = True
     markers = measure.label(local_max_mask)
     
-    DAPI_watershed = segmentation.watershed(-distance, markers, mask=DAPI_mask)
+    segmented_amastigotes = segmentation.watershed(-distance, markers, mask=amastigote_mask)
     
-    DAPI_clean = segmentation.clear_border(DAPI_watershed) 
     
-    Nuclei_mask = morphology.remove_small_objects(DAPI_clean, min_size=500)
     
-    Kinetoplast_mask = DAPI_clean ^ Nuclei_mask
-    
-    Nuclei_labels = measure.label(Nuclei_mask)  
-    
-    Kinetoplast_labels = measure.label(Kinetoplast_mask)
-    
-    Kinetoplast_props = measure.regionprops(Kinetoplast_labels)
-    
-    Nuclei_props = measure.regionprops(Nuclei_labels)
-    
-    #Measure distances between Nuceli centroids and kinetoplast centroids
+    Nuclei_props = measure.regionprops(Nuclei_mask)
+    amastigote_props = measure.regionprops(segmented_amastigotes)
+   
     
     infected_cells = []
-    for tc in range(len(Kinetoplast_props)):
-        Kinetoplast_coord = Kinetoplast_props[tc].centroid #(y, x)
+    for tc in range(len(amastigote_props)):
+       amastigote_coord = amastigote_props[tc].centroid #(y, x)
     
-        yk = int(Kinetoplast_coord[0]) #Kinetoplast y coordinate
-        xk = int(Kinetoplast_coord[1]) #Kinetoplast x coordinate
+       yk = int(amastigote_coord[0]) #Kinetoplast y coordinate
+       xk = int(amastigote_coord[1]) #Kinetoplast x coordinate
     
     
-        distances = []
-        for i in range(len(Nuclei_props)):
-            Nuclei_coord = Nuclei_props[i].centroid #(y, x)
-            yn = int(Nuclei_coord[0]) #Nucleus y coordinate
-            xn = int(Nuclei_coord[1]) #Nucleus x coordinate
+       distances = []
+       for i in range(len(Nuclei_props)):
+           Nuclei_coord = Nuclei_props[i].centroid #(y, x)
+           yn = int(Nuclei_coord[0]) #Nucleus y coordinate
+           xn = int(Nuclei_coord[1]) #Nucleus x coordinate
         
         
-            d = math.sqrt((xn - xk)**2 + (yn - yk)**2)
+           d = math.sqrt((xn - xk)**2 + (yn - yk)**2)
             
-            distances.append(d)
+           distances.append(d)
     
-        infected_cells.append(distances.index(min(distances)))
+       infected_cells.append(distances.index(min(distances)))
     
     for cell in range(1, len(Nuclei_props) + 1):
         amastigotes = 0
         for j in range(len(infected_cells)):
             if infected_cells[j] == cell:
                 amastigotes = amastigotes + 1
-        row = [conditions[0], conditions[1], conditions[2], cell, amastigotes]
+        row = [conditions[0], conditions[1], conditions[2], conditions[3], cell, amastigotes]
         results.append(row)
-                
     
     # Make montage
     montage_name = "%s.png" % (fields[fov]) 
-    montage(DAPI, Tc, Tub, Kinetoplast_labels, Nuclei_labels) #Opens a plot with the three images  
+    montage(DAPI, Tc, Tub, segmented_amastigotes, Nuclei_mask) #Opens a plot with the three images  
     plt.savefig(os.path.join(montagedir, montage_name), bbox_inches='tight', dpi = 300) #Saves the plot
     plt.close() #Closes the plot
 
@@ -190,4 +205,3 @@ for fov in range(len(fields)):
 with open('results.csv', 'w', newline='') as f: #Measurements for each field's average value
     writer = csv.writer(f)
     writer.writerows(results)
-        
