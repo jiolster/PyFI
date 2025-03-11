@@ -91,7 +91,7 @@ fields.sort()
 
 #Columns for the output table of Average FOV measurments
 #List of lists, each row corresponds to the measurments for a field of view
-head = ["Cepa", "Linea","Replica", "Campo", "Celula", "Amastigotes"]
+head = ["MOI", "Linea", "Relpica", "Campo", "Celula", "Amastigotes"]
 
 # First row is the name of the columns
 results = [head] 
@@ -113,20 +113,25 @@ for fov in range(len(fields)):
     
     #Mask for Nuclear channel
    
-    DAPI_smooth = filters.gaussian(DAPI)
-   
-    if conditions[1] == "AC16":
+    #DAPI_smooth = filters.gaussian(DAPI)
+    
+    '''
+    if conditions[1] == "AC16" or conditions[1] == "THP100" or conditions[1] == "THP80":
         DAPI_threshold = filters.threshold_otsu(DAPI)
     else:
         DAPI_threshold = filters.threshold_li(DAPI)
+    '''
         
+    DAPI_threshold = filters.threshold_li(DAPI)
+    
     DAPI_mask = DAPI > DAPI_threshold
    
+    DAPI_mask = morphology.erosion(DAPI_mask)
+    
     DAPI_mask = morphology.remove_small_objects(DAPI_mask, min_size=2000)
    
     DAPI_mask = ndi.binary_fill_holes(DAPI_mask)
    
-    DAPI_mask = morphology.erosion(DAPI_mask)
    
    
     #DAPI_mask = segmentation.clear_border(DAPI_mask)
@@ -134,21 +139,20 @@ for fov in range(len(fields)):
     #Watershed
     distance = ndi.distance_transform_edt(DAPI_mask) 
    
-    local_max_coords = feature.peak_local_max(distance, min_distance=20, exclude_border=False)
+    local_max_coords = feature.peak_local_max(distance, min_distance=50, exclude_border=False)
     local_max_mask = np.zeros(distance.shape, dtype=bool)
     local_max_mask[tuple(local_max_coords.T)] = True
     markers = measure.label(local_max_mask)
    
     Nuclei_mask = segmentation.watershed(-distance, markers, mask=DAPI_mask)
-    
    
     #Mask for anti-Tc channel
-    smooth_amastigotes = filters.gaussian(Tc)
-
-    amastigote_thresh = filters.threshold_otsu(smooth_amastigotes)
-    amastigote_mask = smooth_amastigotes > amastigote_thresh
+    #smooth_amastigotes = filters.gaussian(Tc)
     
-    amastigote_mask = morphology.remove_small_objects(amastigote_mask, min_size=100)
+    amastigote_thresh = filters.threshold_otsu(Tc)
+    amastigote_mask = Tc > amastigote_thresh
+    
+    
     
     # Watershed
     distance = ndi.distance_transform_edt(amastigote_mask) 
@@ -159,11 +163,12 @@ for fov in range(len(fields)):
     markers = measure.label(local_max_mask)
     
     segmented_amastigotes = segmentation.watershed(-distance, markers, mask=amastigote_mask)
-    
-    
+    segmented_amastigotes = morphology.remove_small_objects(segmented_amastigotes, min_size=150)
+    segmented_amastigotes = morphology.label(segmented_amastigotes)
     
     Nuclei_props = measure.regionprops(Nuclei_mask)
     amastigote_props = measure.regionprops(segmented_amastigotes)
+    
    
     
     infected_cells = []
@@ -172,7 +177,6 @@ for fov in range(len(fields)):
     
        yk = int(amastigote_coord[0]) #Kinetoplast y coordinate
        xk = int(amastigote_coord[1]) #Kinetoplast x coordinate
-    
     
        distances = []
        for i in range(len(Nuclei_props)):
@@ -187,12 +191,12 @@ for fov in range(len(fields)):
     
        infected_cells.append(distances.index(min(distances)))
     
-    for cell in range(1, len(Nuclei_props) + 1):
+    for cell in range(0, len(Nuclei_props)):
         amastigotes = 0
         for j in range(len(infected_cells)):
             if infected_cells[j] == cell:
                 amastigotes = amastigotes + 1
-        row = [conditions[0], conditions[1], conditions[2], conditions[3], cell, amastigotes]
+        row = [conditions[0], conditions[1], conditions[2], conditions[3], cell+1, amastigotes]
         results.append(row)
     
     # Make montage
