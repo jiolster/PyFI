@@ -73,7 +73,7 @@ def montage(Nuc, Tc, Tub, segmented_amastigotes, cell_masks):
 
 
 # Wroking direcotry (where program is saved)
-wd = "/home/joaquin/Desktop/20250219 - MOI 10a1 4h/Medicion"
+wd = "/home/joaquin/Desktop/20250319 - MOI 20a1 4h/Medicion"
 os.chdir(wd)
 
 # Montage direcotry
@@ -83,7 +83,7 @@ make_sure_path_exists(montagedir)
 
 
 # Folder where all the images are stored, each within a direcotry for all the images in a field
-main_folder = '/home/joaquin/Desktop/20250219 - MOI 10a1 4h/Fotos'
+main_folder = '/home/joaquin/Desktop/20250319 - MOI 20a1 4h/Fotos'
 
 # List of each folder containing the images for the fields of view
 fields = [f for f in os.listdir(main_folder) if os.path.isdir(os.path.join(main_folder, f))]
@@ -91,7 +91,7 @@ fields.sort()
 
 #Columns for the output table of Average FOV measurments
 #List of lists, each row corresponds to the measurments for a field of view
-head = ["MOI", "Linea", "Relpica", "Campo", "Celula", "Amastigotes"]
+head = ["Cepa", "Linea", "Relpica", "Campo", "Celula", "Amastigotes"]
 
 # First row is the name of the columns
 results = [head] 
@@ -113,7 +113,7 @@ for fov in range(len(fields)):
     
     #Mask for Nuclear channel
    
-    #DAPI_smooth = filters.gaussian(DAPI)
+    DAPI_smooth = filters.gaussian(DAPI)
     
     '''
     if conditions[1] == "AC16" or conditions[1] == "THP100" or conditions[1] == "THP80":
@@ -122,15 +122,17 @@ for fov in range(len(fields)):
         DAPI_threshold = filters.threshold_li(DAPI)
     '''
         
-    DAPI_threshold = filters.threshold_li(DAPI)
+    DAPI_threshold = filters.threshold_otsu(DAPI_smooth)
     
     DAPI_mask = DAPI > DAPI_threshold
    
-    DAPI_mask = morphology.erosion(DAPI_mask)
+    DAPI_mask = morphology.isotropic_erosion(DAPI_mask, radius=6)
     
-    DAPI_mask = morphology.remove_small_objects(DAPI_mask, min_size=2000)
-   
     DAPI_mask = ndi.binary_fill_holes(DAPI_mask)
+    
+    #DAPI_mask = morphology.remove_small_objects(DAPI_mask, min_size=1000)
+   
+
    
    
    
@@ -139,39 +141,45 @@ for fov in range(len(fields)):
     #Watershed
     distance = ndi.distance_transform_edt(DAPI_mask) 
    
-    local_max_coords = feature.peak_local_max(distance, min_distance=50, exclude_border=False)
+    local_max_coords = feature.peak_local_max(distance, min_distance=40, exclude_border=False)
     local_max_mask = np.zeros(distance.shape, dtype=bool)
     local_max_mask[tuple(local_max_coords.T)] = True
     markers = measure.label(local_max_mask)
    
     Nuclei_mask = segmentation.watershed(-distance, markers, mask=DAPI_mask)
+    Nuclei_mask = morphology.remove_small_objects(Nuclei_mask, min_size=1000)
+    Nuclei_mask = morphology.label(Nuclei_mask)
    
     #Mask for anti-Tc channel
     #smooth_amastigotes = filters.gaussian(Tc)
     
-    amastigote_thresh = filters.threshold_otsu(Tc)
+    amastigote_thresh = filters.threshold_li(Tc)
     amastigote_mask = Tc > amastigote_thresh
     
+    amastigote_mask = morphology.isotropic_erosion(amastigote_mask, radius=1.5)
+
+    
+    amastigote_mask = morphology.remove_small_objects(amastigote_mask, min_size=50)
     
     
     # Watershed
     distance = ndi.distance_transform_edt(amastigote_mask) 
     
-    local_max_coords = feature.peak_local_max(distance, min_distance=7, exclude_border=False)
+    local_max_coords = feature.peak_local_max(distance, min_distance=3, exclude_border=False)
     local_max_mask = np.zeros(distance.shape, dtype=bool)
     local_max_mask[tuple(local_max_coords.T)] = True
     markers = measure.label(local_max_mask)
     
     segmented_amastigotes = segmentation.watershed(-distance, markers, mask=amastigote_mask)
-    segmented_amastigotes = morphology.remove_small_objects(segmented_amastigotes, min_size=150)
+    segmented_amastigotes = morphology.remove_small_objects(segmented_amastigotes, min_size=50)
     segmented_amastigotes = morphology.label(segmented_amastigotes)
     
     Nuclei_props = measure.regionprops(Nuclei_mask)
     amastigote_props = measure.regionprops(segmented_amastigotes)
     
    
-    
-    infected_cells = []
+    #Measure the distance of each amastigote to each nucleus, then save which nucleus is the closest to each amastigote
+    infected_cells = [] #Nuclei which were the closest to an amastigote are considered to be part of infected cells
     for tc in range(len(amastigote_props)):
        amastigote_coord = amastigote_props[tc].centroid #(y, x)
     
